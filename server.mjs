@@ -30,6 +30,36 @@ function storeInternalRequest(payload) {
   return { sent: true, mode: 'internal-inbox' };
 }
 
+async function readJsonBody(req, maxBytes = 20000) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', chunk => {
+      raw += chunk;
+      if (raw.length > maxBytes) {
+        reject(new Error('Request too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      try { resolve(raw ? JSON.parse(raw) : {}); }
+      catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+const guestRate = new Map();
+function guestRateAllowed(req) {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  const now = Date.now();
+  const windowMs = 5 * 60 * 1000;
+  const row = guestRate.get(ip) || { start: now, count: 0 };
+  if (now - row.start > windowMs) { row.start = now; row.count = 0; }
+  row.count += 1;
+  guestRate.set(ip, row);
+  return row.count <= 30;
+}
+
 function staffAuthorized(req, url) {
   const expected = process.env.STAFF_DASHBOARD_KEY || '';
   if (!expected) return false;
@@ -248,6 +278,78 @@ function createServer() {
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  if (req.method === 'GET' && url.pathname === '/guest') {
+    res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'no-store'});
+    res.end(widgetHtml);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/guest/config') {
+    const room = clean(url.searchParams.get('room') || '', 20);
+    const data = publicConfig(room, 'Guest Web Concierge');
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    res.end(JSON.stringify(data));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/guest/tool') {
+    if (!guestRateAllowed(req)) {
+      res.writeHead(429, {'content-type':'application/json'}).end(JSON.stringify({error:'Too many requests. Please try again shortly.'}));
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const name = clean(body.name, 80);
+      const args = body.args || {};
+
+      if (name === 'create_service_request') {
+        const service = clean(args.service, 40);
+        if (!['cleaning','towels','late_checkout','manager','other'].includes(service)) throw new Error('Unsupported service');
+        const room = clean(args.room, 20);
+        const details = clean(args.details, 1200);
+        if (!room || !details || args.consent_to_share !== true) throw new Error('Room, details and confirmation are required');
+        const id = ticket('JP');
+        const priority = priorityFor(service, details);
+        const payload = { kind:'service_request', ticketId:id, createdAt:new Date().toISOString(), service, room, details, source:'Guest Web Concierge', priority };
+        storeInternalRequest(payload);
+        res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({structuredContent:{ok:true,ticketId:id,priority,emailed:false,message:'Request saved to the hotel service inbox.'}}));
+        return;
+      }
+
+      if (name === 'create_activity_request') {
+        const activity = clean(args.activity, 40);
+        if (!['rafting','kunjapuri'].includes(activity)) throw new Error('Unsupported activity');
+        const room = clean(args.room, 20);
+        const details = clean(args.details, 1200);
+        if (!room || !details || args.consent_to_share !== true) throw new Error('Room, details and confirmation are required');
+        const id = ticket('TRV');
+        const payload = { kind:'activity_request', ticketId:id, createdAt:new Date().toISOString(), activity, room, details, source:'Guest Web Concierge', priority:'Normal' };
+        storeInternalRequest(payload);
+        res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({structuredContent:{ok:true,ticketId:id,emailed:false,message:'Activity enquiry saved to the hotel service inbox.'}}));
+        return;
+      }
+
+      if (name === 'submit_guest_feedback') {
+        const rating = Number(args.rating);
+        const comment = clean(args.comment, 2500);
+        const room = clean(args.room, 20);
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5 || !comment || args.consent_to_share !== true) throw new Error('Rating, comment and confirmation are required');
+        const id = ticket('FB');
+        const priority = rating <= 2 ? 'High' : rating === 3 ? 'Normal' : 'Positive';
+        const payload = { kind:'feedback', ticketId:id, createdAt:new Date().toISOString(), rating, comment, room, source:'Guest Web Concierge', contactRequested:!!args.contact_requested, priority };
+        storeInternalRequest(payload);
+        res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'}).end(JSON.stringify({structuredContent:{ok:true,ticketId:id,priority,emailed:false,message:'Feedback saved to the hotel service inbox.'}}));
+        return;
+      }
+
+      throw new Error('Unsupported action');
+    } catch (err) {
+      res.writeHead(400, {'content-type':'application/json','cache-control':'no-store'});
+      res.end(JSON.stringify({error: clean(err?.message || 'Request failed', 200)}));
+      return;
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/staff') {
     sendHtml(res, 'staff.html');
     return;
@@ -288,7 +390,10 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/terms') { sendHtml(res, 'terms.html'); return; }
   if (req.method === 'GET' && url.pathname === '/support') { sendHtml(res, 'support.html'); return; }
   if (req.method === 'GET' && url.pathname === '/concierge') {
-    res.writeHead(200, {'content-type':'text/html; charset=utf-8'}).end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>JP Hills AI Concierge</title><style>body{font-family:system-ui;background:#0c1016;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}.c{max-width:620px;padding:38px;background:#151b24;border:1px solid #2a3442;border-radius:24px}.g{color:#d7ad52;font-weight:800;letter-spacing:.08em}h1{font-size:40px;margin:10px 0 12px}p{color:#b8c0cc;line-height:1.6}code{color:#8ee6ff}</style></head><body><div class="c"><div class="g">HOTEL JP HILLS · RISHIKESH</div><h1>AI Guest Concierge</h1><p>This service runs inside ChatGPT. Hotel information and guest-service actions are provided by the JP Hills MCP plugin.</p><p>Status endpoint: <code>/health</code></p></div></body></html>`); return;
+    const qs = url.search || '';
+    res.writeHead(302, { Location: '/guest' + qs });
+    res.end();
+    return;
   }
   if (req.method === 'GET' && url.pathname === '/.well-known/openai-apps-challenge') {
     const token = String(process.env.OPENAI_APPS_CHALLENGE_TOKEN || '').trim();

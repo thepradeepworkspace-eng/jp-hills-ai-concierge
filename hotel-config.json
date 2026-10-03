@@ -1,0 +1,29 @@
+{
+  "brandName":"Hotel JP Hills, Rishikesh",
+  "tagline":"Your stay, one conversation away.",
+  "welcome":"Namaste 🙏 How can we make your stay better?",
+  "accent":"#d7ad52",
+  "secondaryAccent":"#8ee6ff",
+  "wifi":{"network":"JP Hills Guest","password":"CHANGE_ME","note":"If the network is not visible, ask the concierge and the team will assist."},
+  "breakfast":{"time":"8:00 AM – 10:00 AM","location":"Restaurant","note":"For special dietary requirements, tell the concierge."},
+  "rooftop":{"location":"4th Floor Rooftop Café","cafeTime":"7:00 PM – 1:00 AM","musicTime":"6:00 PM – 10:30 PM","note":"Rooftop access is complimentary for in-house guests."},
+  "pool":{"time":"8:00 AM – 8:00 PM","note":"Swimming costume is mandatory. Rental is available from reception at ₹200 per article."},
+  "checkin":"2:00 PM",
+  "checkout":"11:00 AM",
+  "lateCheckout":{"note":"Late checkout is subject to availability and hotel approval.","options":["12:00 PM","1:00 PM","2:00 PM","Other"]},
+  "activities":{
+    "rafting":{"title":"River Rafting","summary":"Ask for available rafting stretches, pickup assistance and current operating conditions.","disclaimer":"Final availability, price and operating conditions are confirmed by the hotel/travel partner."},
+    "kunjapuri":{"title":"Kunjapuri Sunrise Trip","summary":"Sunrise temple visit and private trip assistance can be requested through the hotel travel desk.","disclaimer":"Pickup time and route depend on season, weather and the selected experience."}
+  },
+  "menu":{"categories":[
+    {"name":"Breakfast & Light Bites","items":[{"name":"Aloo Paratha","price":"₹180"},{"name":"Veg Sandwich","price":"₹190"}]},
+    {"name":"Indian","items":[{"name":"Dal Tadka","price":"₹260"},{"name":"Paneer Butter Masala","price":"₹340"},{"name":"Jeera Rice","price":"₹220"}]},
+    {"name":"Beverages","items":[{"name":"Masala Tea","price":"₹90"},{"name":"Coffee","price":"₹120"},{"name":"Fresh Lime Soda","price":"₹140"}]}
+  ],"note":"Sample menu — replace with live hotel menu before guest launch."},
+  "services":{
+    "cleaning":["Full room cleaning","Bathroom cleaning","Bedsheet change","Quick tidy-up"],
+    "towels":["2 fresh towels","4 fresh towels","Toiletries","Water bottles","Extra bedding"],
+    "manager":["Call me","Visit my room","I want to share something privately"],
+    "other":["Reception help","Maintenance","Food & Beverage","Travel desk","Other request"]
+  }
+}

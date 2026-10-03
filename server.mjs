@@ -17,6 +17,28 @@ const TEMPLATE_URI = 'ui://jp-hills/concierge-v1.html';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_ORIGIN = 'https://jp-hills-ai-concierge.onrender.com';
 
+const internalRequests = [];
+
+function storeInternalRequest(payload) {
+  const row = {
+    ...payload,
+    status: payload.status || 'Pending',
+    storedAt: new Date().toISOString()
+  };
+  internalRequests.unshift(row);
+  if (internalRequests.length > 500) internalRequests.length = 500;
+  console.log('[INTERNAL REQUEST]', JSON.stringify(row));
+  return { sent: true, mode: 'internal-inbox' };
+}
+
+function staffAuthorized(req, url) {
+  const expected = process.env.STAFF_DASHBOARD_KEY || '';
+  if (!expected) return false;
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const query = url.searchParams.get('key') || '';
+  return bearer === expected || query === expected;
+}
+
 function sendHtml(res, fileName, status = 200) {
   const filePath = path.join(PUBLIC_DIR, fileName);
   if (!fs.existsSync(filePath)) {
@@ -234,10 +256,11 @@ function createServer() {
         ['Ticket', id], ['Room', payload.room], ['Service', payload.service.replace('_',' ')], ['Priority', priority], ['Details', payload.details], ['Source', payload.source], ['Time', payload.createdAt]
       ], 'Sent from JP Hills AI Concierge after guest confirmation.')
     });
+    const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
-    const delivered = !!(email.sent || webhook.sent);
+    const delivered = !!(internal.sent || email.sent || webhook.sent);
     if (!delivered) return textResult(`Request ${id} could not be delivered to the hotel system. Please contact reception directly.`, { ok:false, ticketId:id, priority, emailed:false, message:'Request was not delivered. Please contact reception directly.' });
-    return textResult(`Request ${id} was sent to the hotel team for room ${payload.room}. This is a request, not a guarantee of completion or approval.`, { ok:true, ticketId:id, priority, emailed:email.sent, message:'Request sent to the hotel team.' });
+    return textResult(`Request ${id} was sent to the hotel team for room ${payload.room}. This is a request, not a guarantee of completion or approval.`, { ok:true, ticketId:id, priority, emailed:email.sent, message:'Request saved to the hotel service inbox.' });
   });
 
   server.registerTool('create_activity_request', {
@@ -253,10 +276,11 @@ function createServer() {
     const id = ticket('TRV');
     const payload = { kind:'activity_request', ticketId:id, createdAt:new Date().toISOString(), activity:args.activity, room:clean(args.room,20), details:clean(args.details,1200), source:clean(args.source||'ChatGPT Guest Concierge',80) };
     const email = await sendHotelEmail({ subject:`[Travel Desk] ${id} · Room ${payload.room} · ${payload.activity}`, html:emailLayout('New travel/activity enquiry', [['Ticket',id],['Room',payload.room],['Activity',payload.activity],['Details',payload.details],['Source',payload.source],['Time',payload.createdAt]], 'This is an enquiry only. Confirm availability and pricing directly with the guest.') });
+    const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
-    const delivered = !!(email.sent || webhook.sent);
+    const delivered = !!(internal.sent || email.sent || webhook.sent);
     if (!delivered) return textResult(`Activity enquiry ${id} could not be delivered to the hotel system. Please contact reception or the travel desk directly.`, {ok:false,ticketId:id,emailed:false,message:'Booking enquiry was not delivered.'});
-    return textResult(`Activity enquiry ${id} was sent to the hotel/travel desk. Availability and price still require confirmation.`, {ok:true,ticketId:id,emailed:email.sent,message:'Booking enquiry sent for confirmation.'});
+    return textResult(`Activity enquiry ${id} was sent to the hotel/travel desk. Availability and price still require confirmation.`, {ok:true,ticketId:id,emailed:email.sent,message:'Booking enquiry saved to the hotel service inbox.'});
   });
 
   server.registerTool('submit_guest_feedback', {
@@ -274,10 +298,11 @@ function createServer() {
     const priority = args.rating <= 2 ? 'High' : args.rating === 3 ? 'Normal' : 'Positive';
     const payload = { kind:'feedback', ticketId:id, createdAt:new Date().toISOString(), rating:args.rating, comment:clean(args.comment,2500), room:clean(args.room,20), source:clean(args.source||'ChatGPT Guest Concierge',80), contactRequested:!!args.contact_requested, priority };
     const email = await sendHotelEmail({ subject:`[Feedback ${args.rating}/5] ${id}${payload.room?` · Room ${payload.room}`:''}`, html:emailLayout('New guest feedback', [['Ticket',id],['Rating',`${args.rating}/5`],['Room',payload.room||'Not provided'],['Feedback',payload.comment],['Contact requested',payload.contactRequested?'Yes':'No'],['Source',payload.source],['Time',payload.createdAt]]) });
+    const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
-    const delivered = !!(email.sent || webhook.sent);
+    const delivered = !!(internal.sent || email.sent || webhook.sent);
     if (!delivered) return textResult(`Feedback ${id} could not be delivered to the hotel system. Please share it with reception directly.`, {ok:false,ticketId:id,priority,emailed:false,message:'Feedback was not delivered.'});
-    return textResult(`Feedback ${id} was shared with Hotel JP Hills.`, {ok:true,ticketId:id,priority,emailed:email.sent,message:'Thank you. Your feedback has been shared with the hotel team.'});
+    return textResult(`Feedback ${id} was shared with Hotel JP Hills.`, {ok:true,ticketId:id,priority,emailed:email.sent,message:'Thank you. Your feedback has been saved to the hotel service inbox.'});
   });
 
   return server;
@@ -285,6 +310,28 @@ function createServer() {
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  if (req.method === 'GET' && url.pathname === '/staff') {
+    res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'no-store'});
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JP Hills Service Inbox</title><style>body{font-family:Arial,sans-serif;background:#0e1116;color:#f6f1e8;margin:0}.wrap{max-width:980px;margin:auto;padding:24px}.top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.badge{color:#d4af37;font-weight:800;letter-spacing:.08em}.login,.card{background:#171c24;border:1px solid #2a3340;border-radius:16px;padding:16px;margin-top:16px}input,button{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #3b4655;background:#0f141b;color:#fff}button{cursor:pointer;background:#d4af37;color:#111;border:0;font-weight:700}.grid{display:grid;gap:12px}.meta{font-size:12px;color:#9ba6b2}.pending{color:#ffd166}.resolved{color:#77dd77}.empty{padding:40px;text-align:center;color:#9ba6b2}</style></head><body><div class="wrap"><div class="top"><div><div class="badge">JP HILLS AI CONCIERGE</div><h1>Service Inbox</h1></div><button onclick="load()">Refresh</button></div><div class="login"><input id="key" type="password" placeholder="Staff access code"><button onclick="load()">Open Inbox</button></div><div id="out" class="grid"></div></div><script>async function load(){const key=document.getElementById('key').value.trim();if(!key)return;localStorage.setItem('jp_staff_key',key);const r=await fetch('/api/requests',{headers:{Authorization:'Bearer '+key}});if(!r.ok){document.getElementById('out').innerHTML='<div class="card">Access denied.</div>';return}const d=await r.json();const out=document.getElementById('out');if(!d.requests.length){out.innerHTML='<div class="empty">No guest requests yet.</div>';return}out.innerHTML=d.requests.map(x=>`<div class="card"><div class="top"><strong>${esc(x.kind||x.service||'Request')} • ${esc(x.ticketId||'')}</strong><span class="${x.status==='Resolved'?'resolved':'pending'}">${esc(x.status)}</span></div><div style="margin:10px 0">${esc(x.details||x.comment||'')}</div><div class="meta">Room: ${esc(x.room||'—')} • Priority: ${esc(x.priority||'Normal')} • ${esc(x.createdAt||x.storedAt||'')}</div>${x.status!=='Resolved'?'<button style="margin-top:12px" onclick="resolve(\''+esc(x.ticketId)+'\')">Mark Resolved</button>':''}</div>`).join('')}async function resolve(id){const key=localStorage.getItem('jp_staff_key')||'';await fetch('/api/requests/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{Authorization:'Bearer '+key}});load()}function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}document.getElementById('key').value=localStorage.getItem('jp_staff_key')||'';</script></body></html>`);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/requests') {
+    if (!staffAuthorized(req, url)) { res.writeHead(401, {'content-type':'application/json'}).end(JSON.stringify({error:'Unauthorized'})); return; }
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    res.end(JSON.stringify({requests: internalRequests}));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname.startsWith('/api/requests/') && url.pathname.endsWith('/resolve')) {
+    if (!staffAuthorized(req, url)) { res.writeHead(401, {'content-type':'application/json'}).end(JSON.stringify({error:'Unauthorized'})); return; }
+    const id = decodeURIComponent(url.pathname.split('/')[3] || '');
+    const row = internalRequests.find(x => x.ticketId === id);
+    if (row) row.status = 'Resolved';
+    res.writeHead(row ? 200 : 404, {'content-type':'application/json'}).end(JSON.stringify({ok:!!row}));
+    return;
+  }
+
   if (req.method === 'OPTIONS' && url.pathname === MCP_PATH) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',

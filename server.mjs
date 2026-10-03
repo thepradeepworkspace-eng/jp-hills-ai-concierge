@@ -250,12 +250,7 @@ function createServer() {
       kind: 'service_request', ticketId: id, createdAt: new Date().toISOString(), service: args.service,
       room: clean(args.room,20), details: clean(args.details,1200), source: clean(args.source || 'ChatGPT Guest Concierge',80), priority
     };
-    const email = await sendHotelEmail({
-      subject: `[${priority}] ${id} ´ Room ${payload.room} ´ ${payload.service.replace('_',' ')}`,
-      html: emailLayout('New guest service request', [
-        ['Ticket', id], ['Room', payload.room], ['Service', payload.service.replace('_',' ')], ['Priority', priority], ['Details', payload.details], ['Source', payload.source], ['Time', payload.createdAt]
-      ], 'Sent from JP Hills AI Concierge after guest confirmation.')
-    });
+    const email = { sent:false, mode:'disabled' };
     const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
     const delivered = !!(internal.sent || email.sent || webhook.sent);
@@ -275,7 +270,7 @@ function createServer() {
     if (!args.consent_to_share) throw new Error('Guest confirmation is required before sending this enquiry.');
     const id = ticket('TRV');
     const payload = { kind:'activity_request', ticketId:id, createdAt:new Date().toISOString(), activity:args.activity, room:clean(args.room,20), details:clean(args.details,1200), source:clean(args.source||'ChatGPT Guest Concierge',80) };
-    const email = await sendHotelEmail({ subject:`[Travel Desk] ${id} · Room ${payload.room} · ${payload.activity}`, html:emailLayout('New travel/activity enquiry', [['Ticket',id],['Room',payload.room],['Activity',payload.activity],['Details',payload.details],['Source',payload.source],['Time',payload.createdAt]], 'This is an enquiry only. Confirm availability and pricing directly with the guest.') });
+    const email = { sent:false, mode:'disabled' };
     const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
     const delivered = !!(internal.sent || email.sent || webhook.sent);
@@ -297,7 +292,7 @@ function createServer() {
     const id = ticket('FB');
     const priority = args.rating <= 2 ? 'High' : args.rating === 3 ? 'Normal' : 'Positive';
     const payload = { kind:'feedback', ticketId:id, createdAt:new Date().toISOString(), rating:args.rating, comment:clean(args.comment,2500), room:clean(args.room,20), source:clean(args.source||'ChatGPT Guest Concierge',80), contactRequested:!!args.contact_requested, priority };
-    const email = await sendHotelEmail({ subject:`[Feedback ${args.rating}/5] ${id}${payload.room?` · Room ${payload.room}`:''}`, html:emailLayout('New guest feedback', [['Ticket',id],['Rating',`${args.rating}/5`],['Room',payload.room||'Not provided'],['Feedback',payload.comment],['Contact requested',payload.contactRequested?'Yes':'No'],['Source',payload.source],['Time',payload.createdAt]]) });
+    const email = { sent:false, mode:'disabled' };
     const internal = storeInternalRequest(payload);
     const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
     const delivered = !!(internal.sent || email.sent || webhook.sent);

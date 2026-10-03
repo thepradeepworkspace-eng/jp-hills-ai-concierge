@@ -14,6 +14,7 @@ const PORT = Number(process.env.PORT || 8787);
 const MCP_PATH = '/mcp';
 const TEMPLATE_URI = 'ui://jp-hills/concierge-v1.html';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const APP_ORIGIN = 'https://jp-hills-ai-concierge.onrender.com';
 
 function sendHtml(res, fileName, status = 200) {
   const filePath = path.join(PUBLIC_DIR, fileName);
@@ -115,7 +116,7 @@ function createServer() {
       uri: TEMPLATE_URI,
       mimeType: 'text/html;profile=mcp-app',
       text: widgetHtml,
-      _meta: { ui: { prefersBorder: false } }
+      _meta: { ui: { prefersBorder: false, domain: APP_ORIGIN, csp: { connectDomains: [], resourceDomains: [], frameDomains: [] } } }
     }]
   }));
 
@@ -171,29 +172,27 @@ function createServer() {
       room: z.string().min(1).max(20),
       details: z.string().min(1).max(1200),
       source: z.string().max(80).optional(),
-      guest_name: z.string().max(120).optional(),
-      guest_phone: z.string().max(40).optional(),
       consent_to_share: z.boolean()
     },
     outputSchema: { ok: z.boolean(), ticketId: z.string(), priority: z.string(), emailed: z.boolean(), message: z.string() },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
   }, async (args) => {
     if (!args.consent_to_share) throw new Error('Guest confirmation is required before sending this request.');
     const id = ticket('JP');
     const priority = priorityFor(args.service, args.details);
     const payload = {
       kind: 'service_request', ticketId: id, createdAt: new Date().toISOString(), service: args.service,
-      room: clean(args.room,20), details: clean(args.details,1200), source: clean(args.source || 'ChatGPT Guest Concierge',80),
-      guestName: clean(args.guest_name,120), guestPhone: clean(args.guest_phone,40), priority
+      room: clean(args.room,20), details: clean(args.details,1200), source: clean(args.source || 'ChatGPT Guest Concierge',80), priority
     };
     const email = await sendHotelEmail({
       subject: `[${priority}] ${id} ´ Room ${payload.room} ´ ${payload.service.replace('_',' ')}`,
       html: emailLayout('New guest service request', [
-        ['Ticket', id], ['Room', payload.room], ['Service', payload.service.replace('_',' ')], ['Priority', priority], ['Details', payload.details], ['Source', payload.source],
-        ['Guest name', payload.guestName || 'Not provided'], ['Guest phone', payload.guestPhone || 'Not provided'], ['Time', payload.createdAt]
+        ['Ticket', id], ['Room', payload.room], ['Service', payload.service.replace('_',' ')], ['Priority', priority], ['Details', payload.details], ['Source', payload.source], ['Time', payload.createdAt]
       ], 'Sent from JP Hills AI Concierge after guest confirmation.')
     });
-    await forwardWebhook(payload).catch(err => console.error(err));
+    const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
+    const delivered = !!(email.sent || webhook.sent);
+    if (!delivered) return textResult(`Request ${id} could not be delivered to the hotel system. Please contact reception directly.`, { ok:false, ticketId:id, priority, emailed:false, message:'Request was not delivered. Please contact reception directly.' });
     return textResult(`Request ${id} was sent to the hotel team for room ${payload.room}. This is a request, not a guarantee of completion or approval.`, { ok:true, ticketId:id, priority, emailed:email.sent, message:'Request sent to the hotel team.' });
   });
 
@@ -204,13 +203,15 @@ function createServer() {
       activity: z.enum(['rafting','kunjapuri']), room: z.string().min(1).max(20), details: z.string().min(1).max(1200), source: z.string().max(80).optional(), consent_to_share: z.boolean()
     },
     outputSchema: { ok:z.boolean(), ticketId:z.string(), emailed:z.boolean(), message:z.string() },
-    annotations: { readOnlyHint:false, destructiveHint:false, openWorldHint:true }
+    annotations: { readOnlyHint:false, destructiveHint:true, openWorldHint:true }
   }, async (args) => {
     if (!args.consent_to_share) throw new Error('Guest confirmation is required before sending this enquiry.');
     const id = ticket('TRV');
     const payload = { kind:'activity_request', ticketId:id, createdAt:new Date().toISOString(), activity:args.activity, room:clean(args.room,20), details:clean(args.details,1200), source:clean(args.source||'ChatGPT Guest Concierge',80) };
     const email = await sendHotelEmail({ subject:`[Travel Desk] ${id} · Room ${payload.room} · ${payload.activity}`, html:emailLayout('New travel/activity enquiry', [['Ticket',id],['Room',payload.room],['Activity',payload.activity],['Details',payload.details],['Source',payload.source],['Time',payload.createdAt]], 'This is an enquiry only. Confirm availability and pricing directly with the guest.') });
-    await forwardWebhook(payload).catch(err => console.error(err));
+    const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
+    const delivered = !!(email.sent || webhook.sent);
+    if (!delivered) return textResult(`Activity enquiry ${id} could not be delivered to the hotel system. Please contact reception or the travel desk directly.`, {ok:false,ticketId:id,emailed:false,message:'Booking enquiry was not delivered.'});
     return textResult(`Activity enquiry ${id} was sent to the hotel/travel desk. Availability and price still require confirmation.`, {ok:true,ticketId:id,emailed:email.sent,message:'Booking enquiry sent for confirmation.'});
   });
 
@@ -219,17 +220,19 @@ function createServer() {
     description: 'Send guest feedback to Hotel JP Hills after the guest explicitly chooses to submit it.',
     inputSchema: {
       rating: z.number().int().min(1).max(5), comment: z.string().min(1).max(2500), room: z.string().max(20).optional(), source: z.string().max(80).optional(),
-      guest_name: z.string().max(120).optional(), guest_phone: z.string().max(40).optional(), contact_requested: z.boolean().optional(), consent_to_share: z.boolean()
+      contact_requested: z.boolean().optional(), consent_to_share: z.boolean()
     },
     outputSchema: { ok:z.boolean(), ticketId:z.string(), priority:z.string(), emailed:z.boolean(), message:z.string() },
-    annotations: { readOnlyHint:false, destructiveHint:false, openWorldHint:true }
+    annotations: { readOnlyHint:false, destructiveHint:true, openWorldHint:true }
   }, async (args) => {
     if (!args.consent_to_share) throw new Error('Guest confirmation is required before sending feedback.');
     const id = ticket('FB');
     const priority = args.rating <= 2 ? 'High' : args.rating === 3 ? 'Normal' : 'Positive';
-    const payload = { kind:'feedback', ticketId:id, createdAt:new Date().toISOString(), rating:args.rating, comment:clean(args.comment,2500), room:clean(args.room,20), source:clean(args.source||'ChatGPT Guest Concierge',80), guestName:clean(args.guest_name,120), guestPhone:clean(args.guest_phone,40), contactRequested:!!args.contact_requested, priority };
-    const email = await sendHotelEmail({ subject:`[Feedback ${args.rating}/5] ${id}${payload.room?` · Room ${payload.room}`:''}`, html:emailLayout('New guest feedback', [['Ticket',id],['Rating',`${args.rating}/5`],['Room',payload.room||'Not provided'],['Feedback',payload.comment],['Contact requested',payload.contactRequested?'Yes':'No'],['Guest name',payload.guestName||'Not provided'],['Guest phone',payload.guestPhone||'Not provided'],['Source',payload.source],['Time',payload.createdAt]]) });
-    await forwardWebhook(payload).catch(err => console.error(err));
+    const payload = { kind:'feedback', ticketId:id, createdAt:new Date().toISOString(), rating:args.rating, comment:clean(args.comment,2500), room:clean(args.room,20), source:clean(args.source||'ChatGPT Guest Concierge',80), contactRequested:!!args.contact_requested, priority };
+    const email = await sendHotelEmail({ subject:`[Feedback ${args.rating}/5] ${id}${payload.room?` · Room ${payload.room}`:''}`, html:emailLayout('New guest feedback', [['Ticket',id],['Rating',`${args.rating}/5`],['Room',payload.room||'Not provided'],['Feedback',payload.comment],['Contact requested',payload.contactRequested?'Yes':'No'],['Source',payload.source],['Time',payload.createdAt]]) });
+    const webhook = await forwardWebhook(payload).catch(err => { console.error(err); return { sent:false }; });
+    const delivered = !!(email.sent || webhook.sent);
+    if (!delivered) return textResult(`Feedback ${id} could not be delivered to the hotel system. Please share it with reception directly.`, {ok:false,ticketId:id,priority,emailed:false,message:'Feedback was not delivered.'});
     return textResult(`Feedback ${id} was shared with Hotel JP Hills.`, {ok:true,ticketId:id,priority,emailed:email.sent,message:'Thank you. Your feedback has been shared with the hotel team.'});
   });
 
@@ -248,7 +251,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(); return;
   }
   if (req.method === 'GET' && url.pathname === '/') {
-    res.writeHead(200, {'content-type':'application/jso'}).end(JSON.stringify({ok:true,name:'JP Hills AI Concierge',mcp:MCP_PATH})); return;
+    res.writeHead(200, {'content-type':'application/json'}).end(JSON.stringify({ok:true,name:'JP Hills AI Concierge',mcp:MCP_PATH})); return;
   }
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, {'content-type':'application/json'}).end(JSON.stringify({ok:true,time:new Date().toISOString()})); return;

@@ -85,10 +85,20 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function publicConfig(room = '', source = 'ChatGPT') {
+function liveConfig() {
   return {
     ...config,
     brandName: process.env.HOTEL_BRAND_NAME || config.brandName,
+    wifi: {
+      ...config.wifi,
+      password: process.env.HOTEL_WIFI_PASSWORD || config.wifi.password
+    }
+  };
+}
+
+function publicConfig(room = '', source = 'ChatGPT') {
+  return {
+    ...liveConfig(),
     room: clean(room, 20),
     source: clean(source, 80)
   };
@@ -140,14 +150,15 @@ function createServer() {
     inputSchema: { topic: z.enum(['wifi','breakfast','rooftop','pool','checkin','checkout','menu']) },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
   }, async ({ topic }) => {
+    const c = liveConfig();
     const map = {
-      wifi: config.wifi,
-      breakfast: config.breakfast,
-      rooftop: config.rooftop,
-      pool: config.pool,
-      checkin: { time: config.checkin },
-      checkout: { time: config.checkout },
-      menu: config.menu
+      wifi: c.wifi,
+      breakfast: c.breakfast,
+      rooftop: c.rooftop,
+      pool: c.pool,
+      checkin: { time: c.checkin },
+      checkout: { time: c.checkout },
+      menu: c.menu
     };
     return textResult(`Hotel information for ${topic}.`, { topic, data: map[topic] });
   });

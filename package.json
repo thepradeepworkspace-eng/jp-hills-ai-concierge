@@ -8,8 +8,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
-    "zod": "latest",
-    "nodemailer": "latest"
+    "zod": "latest"
   },
   "engines": {
     "node": ">=20"

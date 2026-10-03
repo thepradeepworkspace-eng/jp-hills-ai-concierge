@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import nodemailer from 'nodemailer';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
@@ -74,65 +73,9 @@ function priorityFor(service, details = '') {
   return 'Normal';
 }
 
-let gmailTransporter;
-
-function plainTextFromHtml(html = '') {
-  return String(html)
-    .replace(/<br\\s*\\/?>/gi, '\n')
-    .replace(/<\\/p>/gi, '\n')
-    .replace(/<\\/tr>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/[ \\t]+/g, ' ')
-    .replace(/\\n{3,}/g, '\n\n')
-    .trim();
-}
-
-async function sendHotelEmail({ subject, html }) {
-  const to = process.env.HOTEL_ALERT_EMAIL;
-
-  // Preferred production route: Gmail SMTP using a Google App Password.
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
-  if (to && gmailUser && gmailAppPassword) {
-    gmailTransporter ||= nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: { user: gmailUser, pass: gmailAppPassword.replace(/\\s+/g, '') }
-    });
-
-    const info = await gmailTransporter.sendMail({
-      from: `JP Hills AI Concierge <${gmailUser}>`,
-      to,
-      subject,
-      text: plainTextFromHtml(html),
-      html
-    });
-    return { sent: true, id: info.messageId || '', mode: 'gmail-smtp' };
-  }
-
-  // Optional fallback for deployments that use a verified Resend domain.
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.FROM_EMAIL;
-  if (to && apiKey && from) {
-    const resp = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [to], subject, html })
-    });
-    if (!resp.ok) throw new Error(`Email provider error ${resp.status}`);
-    const data = await resp.json();
-    return { sent: true, id: data.id || '', mode: 'resend' };
-  }
-
-  console.log('[EMAIL NOT CONFIGURED]', subject, plainTextFromHtml(html));
-  return { sent: false, mode: 'console' };
+async function sendHotelEmail() {
+  // External email delivery is intentionally disabled.
+  return { sent: false, mode: 'disabled' };
 }
 
 async function forwardWebhook(payload) {

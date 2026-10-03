@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JP Hills Service Inbox</title>
+<style>
+body{font-family:Arial,sans-serif;background:#0e1116;color:#f6f1e8;margin:0}
+.wrap{max-width:980px;margin:auto;padding:24px}
+.top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.badge{color:#d4af37;font-weight:800;letter-spacing:.08em}
+.login,.card{background:#171c24;border:1px solid #2a3340;border-radius:16px;padding:16px;margin-top:16px}
+input,button{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #3b4655;background:#0f141b;color:#fff}
+button{cursor:pointer;background:#d4af37;color:#111;border:0;font-weight:700}
+.grid{display:grid;gap:12px}.meta{font-size:12px;color:#9ba6b2}.pending{color:#ffd166}.resolved{color:#77dd77}.empty{padding:40px;text-align:center;color:#9ba6b2}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><div class="badge">JP HILLS AI CONCIERGE</div><h1>Service Inbox</h1></div>
+    <button onclick="loadInbox()">Refresh</button>
+  </div>
+  <div class="login">
+    <input id="key" type="password" placeholder="Staff access code">
+    <button onclick="loadInbox()">Open Inbox</button>
+  </div>
+  <div id="out" class="grid"></div>
+</div>
+<script>
+function esc(value){
+  return String(value ?? '').replace(/[&<>"']/g, function(m){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+  });
+}
+async function loadInbox(){
+  const key=document.getElementById('key').value.trim();
+  if(!key) return;
+  localStorage.setItem('jp_staff_key',key);
+  const r=await fetch('/api/requests',{headers:{Authorization:'Bearer '+key}});
+  const out=document.getElementById('out');
+  if(!r.ok){out.innerHTML='<div class="card">Access denied.</div>';return;}
+  const d=await r.json();
+  if(!d.requests.length){out.innerHTML='<div class="empty">No guest requests yet.</div>';return;}
+  out.innerHTML=d.requests.map(function(x){
+    const title=esc(x.service || x.activity || x.kind || 'Request');
+    const details=esc(x.details || x.comment || '');
+    const status=esc(x.status || 'Pending');
+    const room=esc(x.room || '—');
+    const priority=esc(x.priority || 'Normal');
+    const time=esc(x.createdAt || x.storedAt || '');
+    const id=esc(x.ticketId || '');
+    const resolveBtn=(x.status!=='Resolved') ? '<button style="margin-top:12px" onclick="resolveRequest(\''+id+'\')">Mark Resolved</button>' : '';
+    return '<div class="card"><div class="top"><strong>'+title+' • '+id+'</strong><span class="'+(x.status==='Resolved'?'resolved':'pending')+'">'+status+'</span></div><div style="margin:10px 0">'+details+'</div><div class="meta">Room: '+room+' • Priority: '+priority+' • '+time+'</div>'+resolveBtn+'</div>';
+  }).join('');
+}
+async function resolveRequest(id){
+  const key=localStorage.getItem('jp_staff_key') || '';
+  await fetch('/api/requests/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{Authorization:'Bearer '+key}});
+  loadInbox();
+}
+document.getElementById('key').value=localStorage.getItem('jp_staff_key') || '';
+</script>
+</body>
+</html>
